@@ -1,8 +1,7 @@
 package main
 
-import "regexp"
-
 type EmailDetector struct {
+	RegexDetector
 	threatLevel ThreatLevel
 	category    DetectionCategory
 }
@@ -16,16 +15,7 @@ func NewEmailDetector() Detector {
 
 func (ed EmailDetector) Match(line string) []Detection {
 	emailPattern := `[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}`
-	reg := regexp.MustCompile(emailPattern)
-	detections := make([]Detection, 0)
-	for _, match := range reg.FindAllString(line, -1) {
-		detections = append(detections, Detection{
-			DetectionCategory: ed.category,
-			Leak:              match,
-			ThreatLevel:       ed.threatLevel,
-		})
-	}
-	return detections
+	return ed.RegexMatch(line, emailPattern, ed.category, ed.threatLevel)
 }
 
 func (ed EmailDetector) GetThreatLevel() ThreatLevel {
