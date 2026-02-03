@@ -1,6 +1,9 @@
 package main
 
-import "fmt"
+import (
+	"fmt"
+	"regexp"
+)
 
 type DetectionCategory int
 
@@ -45,4 +48,20 @@ func (d Detection) String() string {
 type Detector interface {
 	Match(line string) []Detection
 	GetThreatLevel() ThreatLevel
+}
+
+type RegexDetector struct{}
+
+func (RegexDetector) RegexMatch(line, pattern string, category DetectionCategory, level ThreatLevel) []Detection {
+	reg := regexp.MustCompile(pattern)
+	detections := make([]Detection, 0)
+	for _, match := range reg.FindAllString(line, -1) {
+		detections = append(detections, Detection{
+			DetectionCategory: category,
+			Leak:              match,
+			ThreatLevel:       level,
+		})
+	}
+
+	return detections
 }
