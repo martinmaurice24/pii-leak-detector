@@ -1,0 +1,18 @@
+2026-01-29T10:23:45Z INFO [auth] User login successful
+2026-01-29T10:24:12Z DEBUG [api] Processing request from client_id=12345
+2026-01-29T10:24:15Z ERROR [database] Connection failed: timeout after 30s
+2026-01-29T10:25:03Z INFO [user] New user registration: john.doe@example.com
+2026-01-29T10:25:45Z WARN [security] Multiple failed login attempts detected from 192.168.1.105
+2026-01-29T10:26:18Z DEBUG [email] Sending welcome email to sarah.connor@techcorp.com
+2026-01-29T10:27:02Z INFO [api] Request processed successfully in 145ms
+2026-01-29T10:27:33Z ERROR [payment] Transaction failed for user_id=9876
+2026-01-29T10:28:10Z INFO [auth] Password reset requested by admin@company.org
+2026-01-29T10:28:45Z DEBUG [network] Incoming connection from 10.0.0.58:8080
+2026-01-29T10:29:12Z WARN [rate-limit] Rate limit exceeded for IP 203.0.113.42
+2026-01-29T10:29:50Z INFO [cache] Cache hit rate: 87.3%
+2026-01-29T10:30:23Z ERROR [validation] Invalid email format received: not-an-email
+2026-01-29T10:31:05Z DEBUG [session] Session created for michael.smith@startup.io
+2026-01-29T10:31:40Z INFO [metrics] Active users: 1247, requests/sec: 342
+2026-01-29T10:32:15Z WARN [disk] Disk usage at 85% on /var/log
+2026-01-29T10:32:48Z ERROR [api] Unauthorized access attempt from 172.16.254.1
+2026-01-29T10:33:20Z INFO [backup] Daily backup completed successfully
