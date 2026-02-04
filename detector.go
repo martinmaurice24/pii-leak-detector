@@ -38,7 +38,7 @@ type Detection struct {
 
 func (d Detection) String() string {
 	return fmt.Sprintf(
-		"category:%s; leak:%s; threat_level:%s",
+		"Category:%s\nLeak:%s\nThreat level:%s\n",
 		d.DetectionCategory,
 		d.Leak,
 		d.ThreatLevel,

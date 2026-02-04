@@ -1,7 +1,7 @@
 2026-01-29T10:23:45Z INFO [auth] User login successful
 2026-01-29T10:24:12Z DEBUG [api] Processing request from client_id=12345
 2026-01-29T10:24:15Z ERROR [database] Connection failed: timeout after 30s
-2026-01-29T10:25:03Z INFO [user] New user registration: john.doe@example.com
+2026-01-29T10:25:03Z INFO [user] New user registration: john.doe@example.com, jane.doe@example.com
 2026-01-29T10:25:45Z WARN [security] Multiple failed login attempts detected from 192.168.1.105
 2026-01-29T10:26:18Z DEBUG [email] Sending welcome email to sarah.connor@techcorp.com
 2026-01-29T10:27:02Z INFO [api] Request processed successfully in 145ms

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -33,6 +34,23 @@ type Source struct {
 	FilePath   string
 	URL        string
 	Content    string
+}
+
+func (s Source) String() string {
+	switch s.SourceType {
+	case FileSource:
+		return fmt.Sprintf("Source file path: %s", s.FilePath)
+	case URLSource:
+		return fmt.Sprintf("Source URL: %s", s.URL)
+	case StringSource:
+		limit := 10
+		if size := len(s.Content); size < limit {
+			limit = size
+		}
+		return fmt.Sprintf("Source is a string: %s...", s.Content[:limit])
+	default:
+		return "Unknown source"
+	}
 }
 
 func (s Source) readFromFile() ([]byte, error) {
