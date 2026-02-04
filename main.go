@@ -20,7 +20,7 @@ func init() {
 	slog.SetDefault(logger.With("appName", "pii-leak-detector"))
 }
 
-func renderAnalyzeResult(result AnalyzeResult) {
+func renderAnalyzeResult(result AnalysisResult) {
 	var data [][]any
 
 	fmt.Printf(
@@ -29,10 +29,10 @@ func renderAnalyzeResult(result AnalyzeResult) {
 		result.NumberOfSourcesWithPIILeaks,
 		result.HighestThreatLevel,
 		result.Err != nil,
-		result.TotalAnalyzeDuration,
+		result.TotalAnalysisDuration,
 	)
 
-	for _, sar := range result.SourceAnalyzeResults {
+	for _, sar := range result.SourceAnalysisResults {
 		for _, ld := range sar.ByLineDetections {
 			for _, d := range ld.Detections {
 				data = append(data, [][]any{{sar.Source, sar.HighestThreatLevel, ld.LineNumber, d.Leak, d.DetectionCategory, d.ThreatLevel}}...)

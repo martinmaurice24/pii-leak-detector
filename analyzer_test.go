@@ -95,7 +95,7 @@ func Test_analyzeSource(t *testing.T) {
 		name        string
 		ctx         context.Context
 		s           Source
-		want        SourceAnalyzeResult
+		want        SourceAnalysisResult
 		expectedErr error
 	}{
 		{
@@ -105,7 +105,7 @@ func Test_analyzeSource(t *testing.T) {
 				SourceType: StringSource,
 				Content:    "Hello jack@test.com.\nContact her at tata@test.com.\nBye\n.",
 			},
-			want: SourceAnalyzeResult{
+			want: SourceAnalysisResult{
 				ByLineDetections: []LineDetections{
 					{
 						LineNumber: 1,

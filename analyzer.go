@@ -18,22 +18,22 @@ type LineDetections struct {
 	HighestThreatLevel ThreatLevel
 }
 
-type SourceAnalyzeResult struct {
+type SourceAnalysisResult struct {
 	// the source of data that was analyzed (i.e: fileName)
 	Source               Source
 	NumberOfLinesScanned int
 	ByLineDetections     []LineDetections
 	HighestThreatLevel   ThreatLevel
-	AnalyzeTime          time.Duration
+	AnalysisTime         time.Duration
 	Err                  error
 }
 
-type AnalyzeResult struct {
+type AnalysisResult struct {
 	NumberOfAnalyzedSources     int
-	SourceAnalyzeResults        []SourceAnalyzeResult
+	SourceAnalysisResults       []SourceAnalysisResult
 	NumberOfSourcesWithPIILeaks int
 	HighestThreatLevel          ThreatLevel
-	TotalAnalyzeDuration        time.Duration
+	TotalAnalysisDuration       time.Duration
 	DetectionsRaw               string
 	Err                         error
 }
@@ -163,7 +163,11 @@ func runDetector(ctx context.Context, line string, lineNumber int) <-chan detect
 	return stream
 }
 
-func runLineProcessing(ctx context.Context, logger *slog.Logger, jobsStream <-chan lineProcessingJob) <-chan LineDetections {
+func runLineProcessing(
+	ctx context.Context,
+	logger *slog.Logger,
+	jobsStream <-chan lineProcessingJob,
+) <-chan LineDetections {
 	detectionsStream := make(chan LineDetections)
 	logger.Debug("starting the line processing worker")
 	go func() {
@@ -237,7 +241,7 @@ func collectDetections(
 	return res
 }
 
-func analyzeSource(ctx context.Context, logger *slog.Logger, s Source) SourceAnalyzeResult {
+func analyzeSource(ctx context.Context, logger *slog.Logger, s Source) SourceAnalysisResult {
 	startTime := time.Now()
 	logger = logger.With("sourceType", fmt.Sprintf("%s", s.SourceType))
 	logger.Info("analyzing source", "source", s)
@@ -248,7 +252,7 @@ func analyzeSource(ctx context.Context, logger *slog.Logger, s Source) SourceAna
 		resultBuildingDone   = make(chan bool)
 		nbWorker             = 1
 		wg                   = &sync.WaitGroup{}
-		result               = SourceAnalyzeResult{Source: s}
+		result               = SourceAnalysisResult{Source: s}
 		errGroup             error
 	)
 
@@ -288,14 +292,20 @@ func analyzeSource(ctx context.Context, logger *slog.Logger, s Source) SourceAna
 
 	<-resultBuildingDone
 
-	result.AnalyzeTime = time.Since(startTime)
+	result.AnalysisTime = time.Since(startTime)
 	result.NumberOfLinesScanned = nbLineScanned
 	result.Err = errGroup
 
 	return result
 }
 
-func analyzeSourceWorker(ctx context.Context, logger *slog.Logger, wg *sync.WaitGroup, sourcesStream <-chan Source, resultsStream chan<- SourceAnalyzeResult) {
+func analyzeSourceWorker(
+	ctx context.Context,
+	logger *slog.Logger,
+	wg *sync.WaitGroup,
+	sourcesStream <-chan Source,
+	resultsStream chan<- SourceAnalysisResult,
+) {
 	go func() {
 		defer wg.Done()
 		for {
@@ -313,10 +323,10 @@ func analyzeSourceWorker(ctx context.Context, logger *slog.Logger, wg *sync.Wait
 	}()
 }
 
-func collectSourcesAnalyzeResult(ctx context.Context, logger *slog.Logger, sourceAnalyzeResultsStream <-chan SourceAnalyzeResult) <-chan AnalyzeResult {
+func collectSourcesAnalysisResult(ctx context.Context, logger *slog.Logger, sourceAnalysisResultsStream <-chan SourceAnalysisResult) <-chan AnalysisResult {
 	var (
-		result                      = make(chan AnalyzeResult)
-		sourceAnalyzedResults       = make([]SourceAnalyzeResult, 0)
+		result                      = make(chan AnalysisResult)
+		sourceAnalysisResults       = make([]SourceAnalysisResult, 0)
 		highestThreatLevel          = ZeroLevel
 		errGroup                    error
 		numberOfSourcesWithPIILeaks int
@@ -328,11 +338,11 @@ func collectSourcesAnalyzeResult(ctx context.Context, logger *slog.Logger, sourc
 			select {
 			case <-ctx.Done():
 				return
-			case r, ok := <-sourceAnalyzeResultsStream:
+			case r, ok := <-sourceAnalysisResultsStream:
 				if !ok {
-					result <- AnalyzeResult{
-						NumberOfAnalyzedSources:     len(sourceAnalyzedResults),
-						SourceAnalyzeResults:        sourceAnalyzedResults,
+					result <- AnalysisResult{
+						NumberOfAnalyzedSources:     len(sourceAnalysisResults),
+						SourceAnalysisResults:       sourceAnalysisResults,
 						NumberOfSourcesWithPIILeaks: numberOfSourcesWithPIILeaks,
 						HighestThreatLevel:          highestThreatLevel,
 						Err:                         errGroup,
@@ -340,7 +350,7 @@ func collectSourcesAnalyzeResult(ctx context.Context, logger *slog.Logger, sourc
 					return
 				}
 
-				sourceAnalyzedResults = append(sourceAnalyzedResults, r)
+				sourceAnalysisResults = append(sourceAnalysisResults, r)
 
 				if len(r.ByLineDetections) > 0 {
 					numberOfSourcesWithPIILeaks++
@@ -360,25 +370,25 @@ func collectSourcesAnalyzeResult(ctx context.Context, logger *slog.Logger, sourc
 	return result
 }
 
-func analyzeSources(ctx context.Context, logger *slog.Logger, sources ...Source) AnalyzeResult {
+func analyzeSources(ctx context.Context, logger *slog.Logger, sources ...Source) AnalysisResult {
 	startTime := time.Now()
 	var (
-		result                     AnalyzeResult
-		jobsStream                 = make(chan Source)
-		sourceAnalyzeResultsStream = make(chan SourceAnalyzeResult)
-		sourceAnalyzeDone          = make(chan bool)
-		wg                         = &sync.WaitGroup{}
-		nbWorkers                  = len(sources)
+		result                      AnalysisResult
+		jobsStream                  = make(chan Source)
+		sourceAnalysisResultsStream = make(chan SourceAnalysisResult)
+		sourceAnalysisDone          = make(chan bool)
+		wg                          = &sync.WaitGroup{}
+		nbWorkers                   = len(sources)
 	)
 
 	wg.Add(nbWorkers)
 	for i := 0; i < nbWorkers; i++ {
-		analyzeSourceWorker(ctx, logger, wg, jobsStream, sourceAnalyzeResultsStream)
+		analyzeSourceWorker(ctx, logger, wg, jobsStream, sourceAnalysisResultsStream)
 	}
 
 	go func() {
-		defer close(sourceAnalyzeDone)
-		result = <-collectSourcesAnalyzeResult(ctx, logger, sourceAnalyzeResultsStream)
+		defer close(sourceAnalysisDone)
+		result = <-collectSourcesAnalysisResult(ctx, logger, sourceAnalysisResultsStream)
 	}()
 
 	for _, source := range sources {
@@ -387,10 +397,10 @@ func analyzeSources(ctx context.Context, logger *slog.Logger, sources ...Source)
 	close(jobsStream)
 
 	wg.Wait()
-	close(sourceAnalyzeResultsStream)
-	<-sourceAnalyzeDone
+	close(sourceAnalysisResultsStream)
+	<-sourceAnalysisDone
 
-	result.TotalAnalyzeDuration = time.Since(startTime)
+	result.TotalAnalysisDuration = time.Since(startTime)
 
 	return result
 }
