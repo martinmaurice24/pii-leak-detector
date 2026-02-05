@@ -153,9 +153,17 @@ func runDetector(ctx context.Context, line string, lineNumber int) <-chan detect
 				}
 			}
 
+			ipv4Detector := NewIPv4Detector()
+			ipv4Detections := ipv4Detector.Match(line)
+			if len(ipv4Detections) > 0 {
+				if highestThreatLevel < ipv4Detector.GetThreatLevel() {
+					highestThreatLevel = ipv4Detector.GetThreatLevel()
+				}
+			}
+
 			stream <- detectionProcessResult{
 				HighestThreatLevel: highestThreatLevel,
-				Detections:         emailDetection,
+				Detections:         append(emailDetection, ipv4Detections...),
 			}
 		}
 	}()
