@@ -1,4 +1,4 @@
-package main
+package piileakdetector
 
 import (
 	"context"
@@ -43,7 +43,7 @@ func (s Source) String() string {
 	case URLSource:
 		return fmt.Sprintf("Source URL: %s", s.URL)
 	case StringSource:
-		limit := 10
+		limit := 30
 		if size := len(s.Content); size < limit {
 			limit = size
 		}

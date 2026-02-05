@@ -1,4 +1,4 @@
-package main
+package piileakdetector
 
 type IPv4Detector struct {
 	RegexDetector

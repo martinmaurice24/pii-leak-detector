@@ -1,4 +1,4 @@
-package main
+package piileakdetector
 
 import (
 	"github.com/stretchr/testify/assert"
