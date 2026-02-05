@@ -74,7 +74,8 @@ func main() {
 		},
 	}
 
-	res := analyzeSources(ctx, logger, sources...)
+	analyzer := NewAnalyzer(logger, sources)
+	res := analyzer.Run(ctx)
 	if res.Err != nil {
 		slog.Error("error happened during source analyze", "err", res.Err)
 	}

@@ -12,43 +12,256 @@ import (
 	"time"
 )
 
-type LineDetections struct {
-	LineNumber         int
-	Detections         []Detection
-	HighestThreatLevel ThreatLevel
-}
-
-type SourceAnalysisResult struct {
-	// the source of data that was analyzed (i.e: fileName)
-	Source               Source
-	NumberOfLinesScanned int
-	ByLineDetections     []LineDetections
-	HighestThreatLevel   ThreatLevel
-	AnalysisTime         time.Duration
-	Err                  error
-}
-
-type AnalysisResult struct {
-	NumberOfAnalyzedSources     int
-	SourceAnalysisResults       []SourceAnalysisResult
-	NumberOfSourcesWithPIILeaks int
-	HighestThreatLevel          ThreatLevel
-	TotalAnalysisDuration       time.Duration
-	DetectionsRaw               string
-	Err                         error
-}
-
 var (
 	ReadSourceErr = errors.New("failed to read the source")
 )
 
-type contentRow struct {
-	Err        error
-	Line       string
-	LineNumber int
+type (
+	LineDetections struct {
+		LineNumber         int
+		Detections         []Detection
+		HighestThreatLevel ThreatLevel
+	}
+
+	SourceAnalysisResult struct {
+		// the source of data that was analyzed (i.e: fileName)
+		Source               Source
+		NumberOfLinesScanned int
+		ByLineDetections     []LineDetections
+		HighestThreatLevel   ThreatLevel
+		AnalysisTime         time.Duration
+		Err                  error
+	}
+
+	AnalysisResult struct {
+		NumberOfAnalyzedSources     int
+		SourceAnalysisResults       []SourceAnalysisResult
+		NumberOfSourcesWithPIILeaks int
+		HighestThreatLevel          ThreatLevel
+		TotalAnalysisDuration       time.Duration
+		Err                         error
+	}
+
+	contentRow struct {
+		Err        error
+		Line       string
+		LineNumber int
+	}
+)
+
+type AnalyzerConfig struct {
+	logger          *slog.Logger
+	sources         []Source
+	detectors       []Detector
+	nbSourceWorkers int
 }
 
-func readSourceContentLines(ctx context.Context, logger *slog.Logger, s Source) <-chan contentRow {
+type Option func(*AnalyzerConfig)
+
+func WithNumberOfSourceWorkers(n int) Option {
+	return func(config *AnalyzerConfig) {
+		config.nbSourceWorkers = n
+	}
+}
+
+func WithDetectors(detectors ...Detector) Option {
+	return func(config *AnalyzerConfig) {
+		config.detectors = detectors
+	}
+}
+
+func NewAnalyzer(logger *slog.Logger, sources []Source, options ...Option) *AnalyzerConfig {
+	config := &AnalyzerConfig{
+		logger:  logger,
+		sources: sources,
+	}
+
+	for _, option := range options {
+		option(config)
+	}
+
+	if len(config.detectors) == 0 {
+		config.detectors = []Detector{
+			NewEmailDetector(),
+			NewIPv4Detector(),
+		}
+	}
+
+	if config.nbSourceWorkers == 0 {
+		config.nbSourceWorkers = len(sources)
+	}
+
+	return config
+}
+
+func (ac *AnalyzerConfig) Run(ctx context.Context) AnalysisResult {
+	var (
+		startTime                   = time.Now()
+		logger                      = ac.logger
+		result                      AnalysisResult
+		jobsStream                  = make(chan Source)
+		sourceAnalysisResultsStream = make(chan SourceAnalysisResult)
+		sourceAnalysisDone          = make(chan bool)
+		wg                          = &sync.WaitGroup{}
+	)
+
+	wg.Add(ac.nbSourceWorkers)
+	for i := 0; i < ac.nbSourceWorkers; i++ {
+		ac.analyzeSourceWorker(ctx, wg, jobsStream, sourceAnalysisResultsStream)
+	}
+
+	go func() {
+		defer close(sourceAnalysisDone)
+		result = <-ac.collectSourcesAnalysisResult(ctx, logger, sourceAnalysisResultsStream)
+	}()
+
+	for _, source := range ac.sources {
+		jobsStream <- source
+	}
+	close(jobsStream)
+
+	wg.Wait()
+	close(sourceAnalysisResultsStream)
+	<-sourceAnalysisDone
+
+	result.TotalAnalysisDuration = time.Since(startTime)
+
+	return result
+}
+
+func (ac *AnalyzerConfig) analyzeSourceWorker(
+	ctx context.Context,
+	wg *sync.WaitGroup,
+	sourcesStream <-chan Source,
+	resultsStream chan<- SourceAnalysisResult,
+) {
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case source, ok := <-sourcesStream:
+				if !ok {
+					return
+				}
+
+				resultsStream <- ac.analyzeSource(ctx, source)
+			}
+		}
+	}()
+}
+
+func (ac *AnalyzerConfig) analyzeSource(ctx context.Context, s Source) SourceAnalysisResult {
+	startTime := time.Now()
+	logger := ac.logger.With("source", fmt.Sprintf("%s", s))
+	logger.Info("analyzing source")
+
+	var (
+		jobs                 = make(chan lineProcessingJob)
+		lineDetectionsStream = make(chan LineDetections)
+		resultBuildingDone   = make(chan bool)
+		nbWorker             = 1
+		wg                   = &sync.WaitGroup{}
+		result               = SourceAnalysisResult{Source: s}
+		errGroup             error
+	)
+
+	// start workers
+	wg.Add(nbWorker)
+	for workerId := 0; workerId < nbWorker; workerId++ {
+		ac.runLineProcessingWorker(ctx, logger, wg, workerId, jobs, lineDetectionsStream)
+	}
+
+	go func() {
+		res := <-ac.collectDetections(ctx, logger, lineDetectionsStream)
+		result.ByLineDetections = res.ByLineDetections
+		result.HighestThreatLevel = res.HighestThreatLevel
+		close(resultBuildingDone)
+	}()
+
+	var nbLineScanned int
+	for row := range ac.readSourceContentLines(ctx, logger, s) {
+		if row.Err != nil {
+			errGroup = errors.Join(errGroup, row.Err)
+			continue
+		}
+
+		job := lineProcessingJob{
+			lineNumber:  row.LineNumber,
+			lineContent: row.Line,
+		}
+
+		logger.Debug("queuing job", "job", job)
+		nbLineScanned = row.LineNumber
+		jobs <- job
+	}
+
+	close(jobs)
+	wg.Wait()
+	close(lineDetectionsStream)
+
+	<-resultBuildingDone
+
+	result.AnalysisTime = time.Since(startTime)
+	result.NumberOfLinesScanned = nbLineScanned
+	result.Err = errGroup
+
+	return result
+}
+
+func (ac *AnalyzerConfig) collectSourcesAnalysisResult(
+	ctx context.Context,
+	logger *slog.Logger,
+	sourceAnalysisResultsStream <-chan SourceAnalysisResult,
+) <-chan AnalysisResult {
+	var (
+		result                      = make(chan AnalysisResult)
+		sourceAnalysisResults       = make([]SourceAnalysisResult, 0)
+		highestThreatLevel          = ZeroLevel
+		errGroup                    error
+		numberOfSourcesWithPIILeaks int
+	)
+
+	go func() {
+		defer close(result)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case r, ok := <-sourceAnalysisResultsStream:
+				if !ok {
+					result <- AnalysisResult{
+						NumberOfAnalyzedSources:     len(sourceAnalysisResults),
+						SourceAnalysisResults:       sourceAnalysisResults,
+						NumberOfSourcesWithPIILeaks: numberOfSourcesWithPIILeaks,
+						HighestThreatLevel:          highestThreatLevel,
+						Err:                         errGroup,
+					}
+					return
+				}
+
+				sourceAnalysisResults = append(sourceAnalysisResults, r)
+
+				if len(r.ByLineDetections) > 0 {
+					numberOfSourcesWithPIILeaks++
+				}
+
+				if highestThreatLevel < r.HighestThreatLevel {
+					highestThreatLevel = r.HighestThreatLevel
+				}
+
+				if r.Err != nil {
+					logger.Error("error happens when analyzing source", "source", r.Source, "err", r.Err)
+					errGroup = errors.Join(errGroup, r.Err)
+				}
+			}
+		}
+	}()
+	return result
+}
+
+func (ac *AnalyzerConfig) readSourceContentLines(ctx context.Context, logger *slog.Logger, s Source) <-chan contentRow {
 	logger.Debug("reading source content lines", "source", s)
 	rowsStream := make(chan contentRow)
 	go func() {
@@ -101,7 +314,7 @@ type lineProcessingJob struct {
 	lineContent string
 }
 
-func runLineProcessingWorker(
+func (ac *AnalyzerConfig) runLineProcessingWorker(
 	ctx context.Context,
 	logger *slog.Logger,
 	wg *sync.WaitGroup,
@@ -112,7 +325,7 @@ func runLineProcessingWorker(
 	logger = logger.With("workerId", workerId)
 	go func() {
 		defer wg.Done()
-		processedLine := runLineProcessing(ctx, logger, jobsStream)
+		processedLine := ac.runLineProcessing(ctx, logger, jobsStream)
 		for {
 			select {
 			case <-ctx.Done():
@@ -133,7 +346,7 @@ type detectionProcessResult struct {
 	Detections         []Detection
 }
 
-func runDetector(ctx context.Context, line string, lineNumber int) <-chan detectionProcessResult {
+func (ac *AnalyzerConfig) runLeakDetectors(ctx context.Context, line string) <-chan detectionProcessResult {
 	stream := make(chan detectionProcessResult)
 	highestThreatLevel := ZeroLevel
 	go func() {
@@ -145,25 +358,20 @@ func runDetector(ctx context.Context, line string, lineNumber int) <-chan detect
 			default:
 			}
 
-			emailDetector := NewEmailDetector()
-			emailDetection := emailDetector.Match(line)
-			if len(emailDetection) > 0 {
-				if highestThreatLevel < emailDetector.GetThreatLevel() {
-					highestThreatLevel = emailDetector.GetThreatLevel()
+			detectionsFound := make([]Detection, 0)
+			for _, detector := range ac.detectors {
+				detections := detector.Match(line)
+				if len(detections) > 0 {
+					if highestThreatLevel < detector.GetThreatLevel() {
+						highestThreatLevel = detector.GetThreatLevel()
+					}
 				}
-			}
-
-			ipv4Detector := NewIPv4Detector()
-			ipv4Detections := ipv4Detector.Match(line)
-			if len(ipv4Detections) > 0 {
-				if highestThreatLevel < ipv4Detector.GetThreatLevel() {
-					highestThreatLevel = ipv4Detector.GetThreatLevel()
-				}
+				detectionsFound = append(detectionsFound, detections...)
 			}
 
 			stream <- detectionProcessResult{
 				HighestThreatLevel: highestThreatLevel,
-				Detections:         append(emailDetection, ipv4Detections...),
+				Detections:         detectionsFound,
 			}
 		}
 	}()
@@ -171,7 +379,7 @@ func runDetector(ctx context.Context, line string, lineNumber int) <-chan detect
 	return stream
 }
 
-func runLineProcessing(
+func (ac *AnalyzerConfig) runLineProcessing(
 	ctx context.Context,
 	logger *slog.Logger,
 	jobsStream <-chan lineProcessingJob,
@@ -189,7 +397,7 @@ func runLineProcessing(
 					return
 				}
 
-				result := <-runDetector(ctx, job.lineContent, job.lineNumber)
+				result := <-ac.runLeakDetectors(ctx, job.lineContent)
 
 				detectionsStream <- LineDetections{
 					LineNumber:         job.lineNumber,
@@ -209,7 +417,7 @@ type collectDetectionResult struct {
 	HighestThreatLevel ThreatLevel
 }
 
-func collectDetections(
+func (ac *AnalyzerConfig) collectDetections(
 	ctx context.Context,
 	logger *slog.Logger,
 	lineDetectionsStream <-chan LineDetections,
@@ -225,10 +433,13 @@ func collectDetections(
 				return
 			case lineDetection, ok := <-lineDetectionsStream:
 				if !ok {
-					res <- collectDetectionResult{
+					collectedResult := collectDetectionResult{
 						ByLineDetections:   ByLineDetections,
 						HighestThreatLevel: highestThreatLevel,
 					}
+
+					logger.Debug("result collected", "result", collectedResult, "ok", ok)
+					res <- collectedResult
 					return
 				}
 
@@ -247,168 +458,4 @@ func collectDetections(
 	}()
 
 	return res
-}
-
-func analyzeSource(ctx context.Context, logger *slog.Logger, s Source) SourceAnalysisResult {
-	startTime := time.Now()
-	logger = logger.With("sourceType", fmt.Sprintf("%s", s.SourceType))
-	logger.Info("analyzing source", "source", s)
-
-	var (
-		jobs                 = make(chan lineProcessingJob)
-		lineDetectionsStream = make(chan LineDetections)
-		resultBuildingDone   = make(chan bool)
-		nbWorker             = 1
-		wg                   = &sync.WaitGroup{}
-		result               = SourceAnalysisResult{Source: s}
-		errGroup             error
-	)
-
-	// start workers
-	wg.Add(nbWorker)
-	for workerId := 0; workerId < nbWorker; workerId++ {
-		runLineProcessingWorker(ctx, logger, wg, workerId, jobs, lineDetectionsStream)
-	}
-
-	go func() {
-		res := <-collectDetections(ctx, logger, lineDetectionsStream)
-		result.ByLineDetections = res.ByLineDetections
-		result.HighestThreatLevel = res.HighestThreatLevel
-		close(resultBuildingDone)
-	}()
-
-	var nbLineScanned int
-	for row := range readSourceContentLines(ctx, logger, s) {
-		if row.Err != nil {
-			errGroup = errors.Join(errGroup, row.Err)
-			continue
-		}
-
-		job := lineProcessingJob{
-			lineNumber:  row.LineNumber,
-			lineContent: row.Line,
-		}
-
-		logger.Debug("queuing job", "job", job)
-		nbLineScanned = row.LineNumber
-		jobs <- job
-	}
-
-	close(jobs)
-	wg.Wait()
-	close(lineDetectionsStream)
-
-	<-resultBuildingDone
-
-	result.AnalysisTime = time.Since(startTime)
-	result.NumberOfLinesScanned = nbLineScanned
-	result.Err = errGroup
-
-	return result
-}
-
-func analyzeSourceWorker(
-	ctx context.Context,
-	logger *slog.Logger,
-	wg *sync.WaitGroup,
-	sourcesStream <-chan Source,
-	resultsStream chan<- SourceAnalysisResult,
-) {
-	go func() {
-		defer wg.Done()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case source, ok := <-sourcesStream:
-				if !ok {
-					return
-				}
-
-				resultsStream <- analyzeSource(ctx, logger, source)
-			}
-		}
-	}()
-}
-
-func collectSourcesAnalysisResult(ctx context.Context, logger *slog.Logger, sourceAnalysisResultsStream <-chan SourceAnalysisResult) <-chan AnalysisResult {
-	var (
-		result                      = make(chan AnalysisResult)
-		sourceAnalysisResults       = make([]SourceAnalysisResult, 0)
-		highestThreatLevel          = ZeroLevel
-		errGroup                    error
-		numberOfSourcesWithPIILeaks int
-	)
-
-	go func() {
-		defer close(result)
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case r, ok := <-sourceAnalysisResultsStream:
-				if !ok {
-					result <- AnalysisResult{
-						NumberOfAnalyzedSources:     len(sourceAnalysisResults),
-						SourceAnalysisResults:       sourceAnalysisResults,
-						NumberOfSourcesWithPIILeaks: numberOfSourcesWithPIILeaks,
-						HighestThreatLevel:          highestThreatLevel,
-						Err:                         errGroup,
-					}
-					return
-				}
-
-				sourceAnalysisResults = append(sourceAnalysisResults, r)
-
-				if len(r.ByLineDetections) > 0 {
-					numberOfSourcesWithPIILeaks++
-				}
-
-				if highestThreatLevel < r.HighestThreatLevel {
-					highestThreatLevel = r.HighestThreatLevel
-				}
-
-				if r.Err != nil {
-					logger.Error("error happens when analyzing source", "source", r.Source, "err", r.Err)
-					errGroup = errors.Join(errGroup, r.Err)
-				}
-			}
-		}
-	}()
-	return result
-}
-
-func analyzeSources(ctx context.Context, logger *slog.Logger, sources ...Source) AnalysisResult {
-	startTime := time.Now()
-	var (
-		result                      AnalysisResult
-		jobsStream                  = make(chan Source)
-		sourceAnalysisResultsStream = make(chan SourceAnalysisResult)
-		sourceAnalysisDone          = make(chan bool)
-		wg                          = &sync.WaitGroup{}
-		nbWorkers                   = len(sources)
-	)
-
-	wg.Add(nbWorkers)
-	for i := 0; i < nbWorkers; i++ {
-		analyzeSourceWorker(ctx, logger, wg, jobsStream, sourceAnalysisResultsStream)
-	}
-
-	go func() {
-		defer close(sourceAnalysisDone)
-		result = <-collectSourcesAnalysisResult(ctx, logger, sourceAnalysisResultsStream)
-	}()
-
-	for _, source := range sources {
-		jobsStream <- source
-	}
-	close(jobsStream)
-
-	wg.Wait()
-	close(sourceAnalysisResultsStream)
-	<-sourceAnalysisDone
-
-	result.TotalAnalysisDuration = time.Since(startTime)
-
-	return result
 }
