@@ -54,7 +54,7 @@ We collect everything to build a source analysis result that will be part of the
 Analyze file content
 ```go
 import (
-    piileakdetector "github/martinmaurice/pii-leak-detector"
+    piileakdetector "github.com/martinmaurice24/pii-leak-detector"
 )
 
 func main() {
@@ -79,7 +79,7 @@ func main() {
 Analyze content downloadable at the given URL
 ```go
 import (
-    piileakdetector "github/martinmaurice/pii-leak-detector"
+    piileakdetector "github.com/martinmaurice24/pii-leak-detector"
 )
 
 func main() {
@@ -104,7 +104,7 @@ func main() {
 Analyze a given content
 ```go
 import (
-    piileakdetector "github/martinmaurice/pii-leak-detector"
+    piileakdetector "github.com/martinmaurice24/pii-leak-detector"
 )
 
 func main() {
