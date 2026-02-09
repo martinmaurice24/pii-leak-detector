@@ -50,21 +50,38 @@ func Test_readSourceContentLines(t *testing.T) {
 			want: []contentRow{
 				{
 					Err:        nil,
-					Line:       "Hello!\n",
+					Line:       "Hello!",
 					LineNumber: 1,
 				},
 				{
 					Err:        nil,
-					Line:       "My name is John.\n",
+					Line:       "My name is John.",
 					LineNumber: 2,
 				},
 				{
 					Err:        nil,
-					Line:       "Nice to meet you.\n",
+					Line:       "Nice to meet you.",
 					LineNumber: 3,
 				},
 			},
 			expectedLineScannedCount: 3,
+		},
+		{
+			name:   "Should read the source content even if the line breaker is missing",
+			ctx:    context.Background(),
+			logger: logger,
+			source: Source{
+				SourceType: StringSource,
+				Content:    "Hello everyone!",
+			},
+			want: []contentRow{
+				{
+					Err:        nil,
+					Line:       "Hello everyone!",
+					LineNumber: 1,
+				},
+			},
+			expectedLineScannedCount: 1,
 		},
 	}
 
@@ -153,7 +170,7 @@ func TestAnalyzerConfig_Run(t *testing.T) {
 							},
 						},
 						HighestThreatLevel:   CriticalLevel,
-						NumberOfLinesScanned: 3,
+						NumberOfLinesScanned: 4,
 					},
 				},
 				NumberOfSourcesWithPIILeaks: 1,

@@ -277,28 +277,28 @@ func (ac *AnalyzerConfig) readSourceContentLines(ctx context.Context, logger *sl
 
 		logger.Debug("Read the source content successfully", "content", string(sourceContent))
 
-		r := bufio.NewReader(bytes.NewReader(sourceContent))
+		scanner := bufio.NewScanner(bytes.NewReader(sourceContent))
 		lineNumber := 1
-		for {
+		for scanner.Scan() {
 			select {
 			case <-ctx.Done():
 				return
 			default:
 			}
 
-			line, err := r.ReadBytes('\n')
-			if err == io.EOF {
+			line := scanner.Text()
+			if scanner.Err() == io.EOF {
 				logger.Debug("End of file")
 				break
-			} else if err != nil {
-				logger.Error(err.Error(), "line", string(line))
+			} else if scanner.Err() != nil {
+				logger.Error(err.Error(), "line", line)
 			} else {
-				logger.Debug("Extracting line", "nb", lineNumber, "line", string(line))
+				logger.Debug("Extracting line", "nb", lineNumber, "line", line)
 			}
 
 			rowsStream <- contentRow{
 				Err:        err,
-				Line:       string(line),
+				Line:       line,
 				LineNumber: lineNumber,
 			}
 

@@ -78,7 +78,7 @@ func getSources() (sources []piileakdetector.Source) {
 	if sourceContent != "" {
 		sources = append(sources, piileakdetector.Source{
 			SourceType: piileakdetector.StringSource,
-			Content:    strings.Replace(sourceContent, "\\n", "\n", -1),
+			Content:    sourceContent,
 		})
 	}
 
