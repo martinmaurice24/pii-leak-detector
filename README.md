@@ -5,7 +5,7 @@ This project demonstrates practical usage of Go concurrency patterns.
 
 ## How to install it
 ````bash
-go get github.com/martinmaurice/pii-leak-detector
+go get github.com/martinmaurice24/pii-leak-detector 
 ````
 
 ## Some keywords
@@ -54,6 +54,8 @@ We collect everything to build a source analysis result that will be part of the
 Analyze file content
 ```go
 import (
+    "context"
+    "log/slog"
     piileakdetector "github.com/martinmaurice24/pii-leak-detector"
 )
 
@@ -79,6 +81,8 @@ func main() {
 Analyze content downloadable at the given URL
 ```go
 import (
+    "context"
+    "log/slog"
     piileakdetector "github.com/martinmaurice24/pii-leak-detector"
 )
 
@@ -104,6 +108,8 @@ func main() {
 Analyze a given content
 ```go
 import (
+    "context"
+    "log/slog"
     piileakdetector "github.com/martinmaurice24/pii-leak-detector"
 )
 
@@ -115,8 +121,8 @@ func main() {
         },
     }
 
-    analyzer := piileakdetector.NewAnalyzer(logger, sources)
-    result := analyzer.Run(ctx)
+    analyzer := piileakdetector.NewAnalyzer(slog.Default(), sources)
+    result := analyzer.Run(context.Background())
     if result.Err != nil {
         log.Fatalf("error happened during source analysis, err: %v", result.Err)
     }
@@ -166,10 +172,20 @@ You can create as many detectors as you want, then configure the analyzer to use
 ```
 ## CLI
 You can use the CLI to detect email and IPv4 leaks in given content.
+First install it by running:
+```bash
+go install github.com/martinmaurice24/pii-leak-detector/cmd/pii-leak-detector@latest
+
+# rename the binary if you want by doing
+mv $(go env GOPATH)/bin/cli $(go env GOPATH)/bin/pii
+
+# Make sure the $(go env GOPATH)/bin folder is in your $PATH
+# that way you could access the binary directly by taping the name which pii in this example
+```
 
 **Example 1: Analyze content directly**
 ```bash
-go run ./cmd/cli/... -content="this file contains a leak: test@test.com\n"
+pii -content="this file contains a leak: test@test.com\n"
 ```
 
 Result:
@@ -194,7 +210,7 @@ Process Duration In Milliseconds: 450.542µs
 
 Analyze 2 files (one of the files contains leaks, not the other one):
 ```bash
-go run ./cmd/cli/... -files=./inputs/logs_clean.txt,./inputs/logs_with_pii.txt
+pii -files=./inputs/logs_clean.txt,./inputs/logs_with_pii.txt
 ```
 
 Result:
