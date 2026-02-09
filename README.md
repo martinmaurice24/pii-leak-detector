@@ -4,9 +4,9 @@ It allows you to take advantage of existing detectors but also gives you the opp
 This project demonstrates practical usage of Go concurrency patterns.
 
 ## How to install it
-````bash
-go get github.com/martinmaurice24/pii-leak-detector 
-````
+```bash
+go get github.com/martinmaurice24/pii-leak-detector
+```
 
 ## Some keywords
 **Detector**: A piece of logic that scans content to find a match like email, IP, or whatever you have defined in your logic.
@@ -60,6 +60,9 @@ import (
 )
 
 func main() {
+    ctx := context.Background()
+    logger := slog.Default()
+
     sources := []piileakdetector.Source{
         {
             SourceType: piileakdetector.FileSource,
@@ -87,6 +90,9 @@ import (
 )
 
 func main() {
+    ctx := context.Background()
+    logger := slog.Default()
+
     sources := []piileakdetector.Source{
         {
             SourceType: piileakdetector.URLSource,
@@ -180,7 +186,7 @@ go install github.com/martinmaurice24/pii-leak-detector/cmd/pii-leak-detector@la
 mv $(go env GOPATH)/bin/cli $(go env GOPATH)/bin/pii
 
 # Make sure the $(go env GOPATH)/bin folder is in your $PATH
-# that way you could access the binary directly by taping the name which pii in this example
+# that way you could access the binary directly by typing the name, which is pii in this example
 ```
 
 **Example 1: Analyze content directly**
