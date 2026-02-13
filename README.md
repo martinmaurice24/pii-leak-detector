@@ -174,8 +174,13 @@ You can create as many detectors as you want, then configure the analyzer to use
         piileakdetector.WithDetectors(
             NewCustomDetector(),
         ),
+        piileakdetector.WithDetectorRunningMode(piileakdetector.FanOutFanInMode)
     )
 ```
+You have currently two modes for running detectors:
+- **SequentialMode**: In this mode, detectors are ran one after the other 
+- **FanOutFanInMode**: In this one, the detectors are run in across many workers (runtime.NumCPU) and the results are aggregated
+
 ## CLI
 You can use the CLI to detect email and IPv4 leaks in given content.
 First install it by running:

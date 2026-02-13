@@ -50,10 +50,11 @@ type (
 )
 
 type AnalyzerConfig struct {
-	logger          *slog.Logger
-	sources         []Source
-	detectors       []Detector
-	nbSourceWorkers int
+	logger               *slog.Logger
+	sources              []Source
+	detectors            Detectors
+	detectorsRunningMode DetectorsRunningMode
+	nbSourceWorkers      int
 }
 
 type Option func(*AnalyzerConfig)
@@ -70,6 +71,12 @@ func WithDetectors(detectors ...Detector) Option {
 	}
 }
 
+func WithDetectorRunningMode(mode DetectorsRunningMode) Option {
+	return func(config *AnalyzerConfig) {
+		config.detectorsRunningMode = mode
+	}
+}
+
 func NewAnalyzer(logger *slog.Logger, sources []Source, options ...Option) *AnalyzerConfig {
 	config := &AnalyzerConfig{
 		logger:  logger,
@@ -81,10 +88,14 @@ func NewAnalyzer(logger *slog.Logger, sources []Source, options ...Option) *Anal
 	}
 
 	if len(config.detectors) == 0 {
-		config.detectors = []Detector{
+		config.detectors = Detectors{
 			NewEmailDetector(),
 			NewIPv4Detector(),
 		}
+	}
+
+	if config.detectorsRunningMode == 0 {
+		config.detectorsRunningMode = SequentialMode
 	}
 
 	if config.nbSourceWorkers == 0 {
@@ -137,17 +148,8 @@ func (ac *AnalyzerConfig) analyzeSourceWorker(
 ) {
 	go func() {
 		defer wg.Done()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case source, ok := <-sourcesStream:
-				if !ok {
-					return
-				}
-
-				resultsStream <- ac.analyzeSource(ctx, source)
-			}
+		for source := range sourcesStream {
+			resultsStream <- ac.analyzeSource(ctx, source)
 		}
 	}()
 }
@@ -325,18 +327,8 @@ func (ac *AnalyzerConfig) runLineProcessingWorker(
 	logger = logger.With("workerId", workerId)
 	go func() {
 		defer wg.Done()
-		processedLine := ac.runLineProcessing(ctx, logger, jobsStream)
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case detection, ok := <-processedLine:
-				if !ok {
-					return
-				}
-				lineDetectionsStream <- detection
-			}
-
+		for processedLine := range ac.runLineProcessing(ctx, logger, jobsStream) {
+			lineDetectionsStream <- processedLine
 		}
 	}()
 }
@@ -348,7 +340,7 @@ type detectionProcessResult struct {
 
 func (ac *AnalyzerConfig) runLeakDetectors(ctx context.Context, line string) <-chan detectionProcessResult {
 	stream := make(chan detectionProcessResult)
-	highestThreatLevel := ZeroLevel
+
 	go func() {
 		defer close(stream)
 		for {
@@ -358,20 +350,11 @@ func (ac *AnalyzerConfig) runLeakDetectors(ctx context.Context, line string) <-c
 			default:
 			}
 
-			detectionsFound := make([]Detection, 0)
-			for _, detector := range ac.detectors {
-				detections := detector.Match(line)
-				if len(detections) > 0 {
-					if highestThreatLevel < detector.GetThreatLevel() {
-						highestThreatLevel = detector.GetThreatLevel()
-					}
-				}
-				detectionsFound = append(detectionsFound, detections...)
-			}
+			detections, highestThreatLevel := ac.detectors.Run(ctx, line, ac.detectorsRunningMode)
 
 			stream <- detectionProcessResult{
 				HighestThreatLevel: highestThreatLevel,
-				Detections:         detectionsFound,
+				Detections:         detections,
 			}
 		}
 	}()
@@ -384,27 +367,19 @@ func (ac *AnalyzerConfig) runLineProcessing(
 	logger *slog.Logger,
 	jobsStream <-chan lineProcessingJob,
 ) <-chan LineDetections {
-	detectionsStream := make(chan LineDetections)
 	logger.Debug("starting the line processing worker")
+	detectionsStream := make(chan LineDetections)
 	go func() {
 		defer close(detectionsStream)
-		for {
-			select {
-			case <-ctx.Done():
+		for job := range jobsStream {
+			result := <-ac.runLeakDetectors(ctx, job.lineContent)
+			if ctx.Err() != nil {
 				return
-			case job, ok := <-jobsStream:
-				if !ok {
-					return
-				}
-
-				result := <-ac.runLeakDetectors(ctx, job.lineContent)
-
-				detectionsStream <- LineDetections{
-					LineNumber:         job.lineNumber,
-					Detections:         result.Detections,
-					HighestThreatLevel: result.HighestThreatLevel,
-				}
-
+			}
+			detectionsStream <- LineDetections{
+				LineNumber:         job.lineNumber,
+				Detections:         result.Detections,
+				HighestThreatLevel: result.HighestThreatLevel,
 			}
 		}
 	}()
